@@ -1,76 +1,107 @@
 "use client";
-
-import { useState } from "react";
-import { Download, Loader2, AlertCircle, Clipboard } from "lucide-react";
-import { motion } from "framer-motion";
+import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Download, Clipboard, CheckCircle, Video, Music } from "lucide-react";
 import {
   Select,
-  SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
+  SelectContent,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "react-hot-toast";
+import Image from "next/image";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
+import { motion } from "framer-motion";
+
+interface Format {
+  id: string;
+  quality: string;
+  format: string;
+}
+
+interface VideoDetails {
+  title: string;
+  thumbnail: string;
+}
+
+interface ApiResponse {
+  formats?: Format[];
+  error?: string;
+  file?: string;
+  videoFormats?: Format[];
+  audioFormats?: Format[];
+  videoDetails?: VideoDetails;
+}
 
 export function YouTubeDownloader() {
-  const [url, setUrl] = useState("");
-  const [isAudioOnly, setIsAudioOnly] = useState(false);
-  const [selectedQuality, setSelectedQuality] = useState("720p");
-  const [includeSubtitles, setIncludeSubtitles] = useState(false);
-  const [error, setError] = useState("");
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [url, setUrl] = useState<string>("");
+  const [formats, setFormats] = useState<Format[]>([]);
+  const [selectedFormat, setSelectedFormat] = useState<string>("");
+  const [selectedQuality, setSelectedQuality] = useState<string>("");
+  const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  const [videoDetails, setVideoDetails] = useState<VideoDetails | null>(null);
+  const [downloadLink, setDownloadLink] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!url) return;
+
+    fetch("/api/youtube", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, format: "auto" }),
+    })
+      .then((res) => res.json())
+      .then((data: ApiResponse) => {
+        if (data.error) {
+          toast.error(data.error);
+          return;
+        }
+
+        const videoFormats = data.videoFormats || [];
+        const audioFormats = data.audioFormats || [];
+        const allFormats = [...videoFormats, ...audioFormats];
+
+        setFormats(allFormats);
+        setVideoDetails(data.videoDetails || null);
+      })
+      .catch(() => toast.error("Failed to fetch video formats"));
+  }, [url]);
+
+  const handleDownload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!url || !selectedFormat || (selectedFormat === "mp4" && !selectedQuality)) {
+      toast.error("Please enter a URL and select a format/quality");
+      return;
+    }
+
+    setIsDownloading(true);
+    try {
+      const response = await fetch("/api/youtube", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, format: selectedFormat, quality: selectedQuality }),
+      });
+
+      const data: ApiResponse = await response.json();
+      if (data.error) throw new Error(data.error);
+
+      toast.success("Download ready!");
+      setDownloadLink(data.file || null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "An unexpected error occurred");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   const handlePaste = async () => {
     try {
       const text = await navigator.clipboard.readText();
       setUrl(text);
     } catch {
-      setError("Unable to paste from clipboard");
-    }
-  };
-
-  const handleDownload = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setError("");
-    if (!url) {
-      setError("Please enter a valid YouTube URL");
-      return;
-    }
-
-    setIsDownloading(true);
-    try {
-      const response = await fetch("/api/download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url,
-          format: isAudioOnly ? "bestaudio" : selectedQuality,
-          withSubs: includeSubtitles,
-        }),
-      });
-
-      const data = await response.json();
-      if (data.error) throw new Error(data.error);
-
-      toast.success("Download started successfully!");
-      window.open(data.file, "_blank");
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setIsDownloading(false);
+      toast.error("Unable to paste from clipboard");
     }
   };
 
@@ -86,7 +117,7 @@ export function YouTubeDownloader() {
             <div className="flex gap-2">
               <Input
                 type="text"
-                placeholder="Paste YouTube URL here"
+                placeholder="Enter YouTube URL"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 className="bg-gray-700 border-gray-600 text-gray-100"
@@ -96,58 +127,63 @@ export function YouTubeDownloader() {
               </Button>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <Switch id="audio-only" checked={isAudioOnly} onCheckedChange={setIsAudioOnly} />
-              <Label htmlFor="audio-only" className="text-white">Audio Only (MP3)</Label>
-            </div>
-            
-            {!isAudioOnly && (
-              <div className="flex flex-col gap-2">
-                <Label className="text-white">Select Video Quality</Label>
-                <Select value={selectedQuality} onValueChange={setSelectedQuality}>
-                  <SelectTrigger className="bg-gray-700 border-gray-600 text-gray-100">
-                    <SelectValue placeholder="Select Quality" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-gray-700 border-gray-600 text-gray-100">
-                    <SelectItem value="1080p">1080p (Full HD) - High Quality</SelectItem>
-                    <SelectItem value="720p">720p (HD) - Good Quality</SelectItem>
-                    <SelectItem value="480p">480p (SD) - Medium Quality</SelectItem>
-                    <SelectItem value="360p">360p (SD) - Low Quality</SelectItem>
-                  </SelectContent>
-                </Select>
-                <div className="flex items-center space-x-2">
-                  <Switch id="include-subs" checked={includeSubtitles} onCheckedChange={setIncludeSubtitles} />
-                  <Label htmlFor="include-subs" className="text-white">Include Subtitles (if available)</Label>
-                </div>
+            {videoDetails && (
+              <div className="mt-4 text-center">
+                <Image src={videoDetails.thumbnail} alt="Thumbnail" width={256} height={144} className="rounded-lg mx-auto" />
+                <p className="mt-2 font-semibold">{videoDetails.title}</p>
               </div>
             )}
 
-            {error && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Error</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
+            {/* اختيار الصيغة */}
+            <Select value={selectedFormat} onValueChange={(value) => { setSelectedFormat(value); setSelectedQuality(""); }}>
+  <SelectTrigger className="bg-gray-700 border-gray-600 text-gray-100 flex items-center">
+    <SelectValue placeholder="Select Format" />
+  </SelectTrigger>
+  <SelectContent className="bg-gray-700 border-gray-600 text-gray-100">
+    <SelectItem value="mp4">
+      <div className="flex items-center gap-2">
+        <Video className="w-5 h-5 text-blue-400" />
+        <span>MP4 (Video)</span>
+      </div>
+    </SelectItem>
+    <SelectItem value="mp3">
+      <div className="flex items-center gap-2">
+        <Music className="w-5 h-5 text-green-400" />
+        <span>MP3 (Audio)</span>
+      </div>
+    </SelectItem>
+  </SelectContent>
+</Select>
+
+
+            {/* اختيار الجودة بناءً على الصيغة المختارة */}
+            {formats.length > 0 ? (
+              <Select value={selectedQuality} onValueChange={(value) => setSelectedQuality(value)}>
+                <SelectTrigger className="bg-gray-700 border-gray-600 text-gray-100 flex items-center">
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  <SelectValue placeholder="Select Quality" />
+                </SelectTrigger>
+                <SelectContent className="bg-gray-700 border-gray-600 text-gray-100">
+                  {formats.map((fmt) => (
+                    <SelectItem key={fmt.id} value={fmt.id}>
+                      {fmt.quality || "Unknown Quality"} ({fmt.format})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <p className="text-gray-400 text-sm">No formats available</p>
             )}
 
-            <motion.div className="w-full" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-              <Button
-                type="submit"
-                className="w-full bg-red-600 hover:bg-red-700 text-white"
-                disabled={isDownloading}
-              >
-                {isDownloading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Downloading...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4 mr-2" />
-                    {isAudioOnly ? "Download Audio" : "Download Video"}
-                  </>
-                )}
-              </Button>
-            </motion.div>
+            <Button type="submit" disabled={isDownloading} className="w-full bg-red-600 text-white flex items-center justify-center">
+              {isDownloading ? "Downloading..." : <><Download className="w-4 h-4 mr-2" /> Download</>}
+            </Button>
+
+            {downloadLink && (
+              <a href={downloadLink} download className=" text-center bg-green-600 text-white py-2 rounded-lg mt-4 flex items-center justify-center">
+                <Download className="w-4 h-4 mr-2" /> Download File
+              </a>
+            )}
           </form>
         </CardContent>
         <CardFooter>
